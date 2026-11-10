@@ -1,11 +1,13 @@
 "use server";
 import { redirect } from "next/navigation";
+import type { HomepageList } from "@prisma/client";
+import { proposeSlot, withdrawProposal } from "@/lib/homepage";
 import { db } from "@/lib/db";
 import { requireEditor } from "@/lib/guards";
 import { claimFromPool, decide, putOnSale, returnToPool, unlist } from "@/lib/submissions";
 import { addPenName, assertCanManageAuthor, promoteToAuthor } from "@/lib/authors";
 import { DomainError } from "@/lib/errors";
-import { dollarsToCents, int, list, optStr, runAction, str, type FormState } from "@/lib/form";
+import { dollarsToCents, flash, int, list, optStr, runAction, str, type FormState } from "@/lib/form";
 
 export async function claimAction(form: FormData) {
   const { editor } = await requireEditor();
@@ -74,7 +76,10 @@ export async function promoteReaderAction(_: FormState, form: FormData): Promise
     const p = await promoteToAuthor({ userId: target.id, actorUserId: user.id, editorId: editor.id, referralCode });
     code = p.internalCode;
   }, "", "/editor");
-  return res?.error ? res : { ok: `${target.displayName} is now an author (ID ${code}).` };
+  if (res?.error) return res;
+  const ok = `${target.displayName} is now an author (ID ${code}).`;
+  await flash(ok);
+  return { ok };
 }
 
 export async function addPenNameAction(_: FormState, form: FormData): Promise<FormState> {
@@ -84,4 +89,22 @@ export async function addPenNameAction(_: FormState, form: FormData): Promise<Fo
     await assertCanManageAuthor(user, authorId);
     await addPenName(authorId, str(form, "name"), optStr(form, "editorId") ?? editor.id, optStr(form, "bio"));
   }, "Pen name added.", "/editor");
+}
+
+
+export async function proposeSlotAction(_: FormState, form: FormData): Promise<FormState> {
+  const { user, editor } = await requireEditor();
+  const periodStart = new Date(str(form, "period"));
+  if (Number.isNaN(periodStart.getTime())) return { error: "Choose a period" };
+  return runAction(
+    () => proposeSlot({ editorProfileId: editor.id, isAdmin: user.role === "ADMIN" }, { bookId: str(form, "bookId"), list: str(form, "list") as HomepageList, periodStart }),
+    "Proposed. An admin will review it.",
+    "/editor",
+  );
+}
+
+export async function withdrawProposalAction(form: FormData) {
+  const { editor } = await requireEditor();
+  await withdrawProposal(editor.id, str(form, "slotId")).catch(() => undefined);
+  redirect("/editor?tab=homepage");
 }

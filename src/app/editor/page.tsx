@@ -5,13 +5,15 @@ import { listPool } from "@/lib/submissions";
 import { GENRES, LANGUAGES } from "@/lib/catalog";
 import { ActionForm } from "@/components/ActionForm";
 import { Card, Field, Notice, StatusBadge, btnOutlineCls, inputCls } from "@/components/ui";
-import { addPenNameAction, claimAction, promoteReaderAction } from "./actions";
+import { addPenNameAction, claimAction, promoteReaderAction, proposeSlotAction, withdrawProposalAction } from "./actions";
+import { LIST_LABELS, schedulablePeriods } from "@/lib/homepage";
 
 const TABS = [
   ["pool", "Submission pool"],
   ["reviewing", "Reviewing"],
   ["books", "My books"],
   ["authors", "My authors"],
+  ["homepage", "Homepage"],
 ] as const;
 type Tab = (typeof TABS)[number][0];
 
@@ -44,6 +46,7 @@ export default async function EditorDashboard({ searchParams }: { searchParams: 
       {tab === "reviewing" && <Reviewing editorId={editor.id} />}
       {tab === "books" && <MyBooks editorId={editor.id} />}
       {tab === "authors" && <MyAuthors editorId={editor.id} isAdmin={user.role === "ADMIN"} />}
+      {tab === "homepage" && <HomepageProposals editorId={editor.id} />}
     </div>
   );
 }
@@ -149,6 +152,44 @@ async function MyAuthors({ editorId, isAdmin }: { editorId: string; isAdmin: boo
           )}
         </Card>
       ))}
+    </div>
+  );
+}
+
+async function HomepageProposals({ editorId }: { editorId: string }) {
+  const periods = schedulablePeriods();
+  const [books, mine] = await Promise.all([
+    db.book.findMany({ where: { editorId, status: "ON_SALE" }, orderBy: { title: "asc" }, select: { id: true, title: true } }),
+    db.homepageSlot.findMany({ where: { proposedById: editorId, endsAt: { gt: new Date() } }, orderBy: [{ startsAt: "asc" }, { list: "asc" }], include: { book: { select: { title: true } } } }),
+  ]);
+  const fmt = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  const label = (start: Date) => { const p = periods.find((x) => x.start.getTime() === start.getTime()) ?? { start, end: start }; return `${fmt(p.start)} – ${fmt(new Date(p.end.getTime() - 1))}`; };
+  const statusCls = { PROPOSED: "text-stone-500", APPROVED: "text-green-700", DECLINED: "text-red-700" } as const;
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-stone-500">Submit your list every two weeks. Admins pick which books go on the home page. You can propose for the current and the next period.</p>
+      <Card title="Propose a book">
+        {books.length === 0 ? <p className="text-sm text-stone-500">You have no books on sale yet.</p> : (
+          <ActionForm action={proposeSlotAction} submitLabel="Propose" className="grid gap-2 sm:grid-cols-[1fr_11rem_12rem_auto] sm:items-end">
+            <Field label="Book"><select name="bookId" className={inputCls}>{books.map((b) => <option key={b.id} value={b.id}>{b.title}</option>)}</select></Field>
+            <Field label="List"><select name="list" className={inputCls}>{Object.entries(LIST_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+            <Field label="Period"><select name="period" className={inputCls}>{periods.map((p, i) => <option key={i} value={p.start.toISOString()}>{i === 0 ? "Current" : "Next"}: {label(p.start)}</option>)}</select></Field>
+          </ActionForm>
+        )}
+      </Card>
+      <Card title="Your proposals">
+        {mine.length === 0 ? <p className="text-sm text-stone-500">None yet.</p> : (
+          <ul className="divide-y divide-stone-200 text-sm dark:divide-stone-800">{mine.map((s) => (
+            <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <span>{s.book.title} <span className="text-stone-500">· {LIST_LABELS[s.list]} · {label(s.startsAt)}</span></span>
+              <span className="flex items-center gap-3">
+                <span className={statusCls[s.status]}>{s.status.toLowerCase()}</span>
+                {s.status === "PROPOSED" && <form action={withdrawProposalAction}><input type="hidden" name="slotId" value={s.id} /><button className="text-xs underline">Withdraw</button></form>}
+              </span>
+            </li>
+          ))}</ul>
+        )}
+      </Card>
     </div>
   );
 }

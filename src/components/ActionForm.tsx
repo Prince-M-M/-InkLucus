@@ -7,11 +7,14 @@ export function ActionForm({
   children,
   submitLabel,
   className = "flex flex-col gap-3",
+  inlineSuccess = false,
 }: {
   action: (s: FormState, f: FormData) => Promise<FormState>;
   children: React.ReactNode;
   submitLabel: string;
   className?: string;
+  /** Show the success message under the form too (e.g. a gift card code to copy). Otherwise a toast shows it. */
+  inlineSuccess?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(action, undefined);
   return (
@@ -21,7 +24,7 @@ export function ActionForm({
         {pending ? "…" : submitLabel}
       </button>
       {state?.error && <p className="text-sm text-red-600" role="alert">{state.error}</p>}
-      {state?.ok && <p className="text-sm text-green-700 dark:text-green-400">{state.ok}</p>}
+      {inlineSuccess && state?.ok && <p className="text-sm text-green-700 dark:text-green-400">{state.ok}</p>}
     </form>
   );
 }

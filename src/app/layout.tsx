@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { currentUser } from "@/lib/auth";
+import { FLASH_COOKIE } from "@/lib/form";
+import { Toast } from "@/components/Toast";
 import { logout } from "./actions";
 import "./globals.css";
 
@@ -8,6 +11,7 @@ export const metadata: Metadata = { title: "InkLucus", description: "Read, liste
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const user = await currentUser();
+  const flashPayload = (await cookies()).get(FLASH_COOKIE)?.value;
   return (
     <html lang="en">
       <body className="min-h-screen bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
@@ -21,6 +25,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <>
                   {user.role === "AUTHOR" && <Link href="/author">Author</Link>}
                   {(user.role === "EDITOR" || user.role === "ADMIN") && <Link href="/editor">Editor</Link>}
+                  {user.role === "ADMIN" && <Link href="/admin">Admin</Link>}
                   <Link href="/dashboard">Dashboard</Link>
                   <form action={logout}><button>Log out</button></form>
                 </>
@@ -34,6 +39,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </nav>
         </header>
         <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
+        <Toast payload={flashPayload} />
       </body>
     </html>
   );

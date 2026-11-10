@@ -1,9 +1,9 @@
-import type { Role } from "@prisma/client";
+import type { AccountStatus, Role } from "@prisma/client";
 
 export type ChapterAccessInput = {
   chapterNumber: number;
   lockChapter: number | null;
-  viewer: { id: string; role: Role } | null;
+  viewer: { id: string; role: Role; status?: AccountStatus } | null;
   /** user id of the book's author (owner of the pen name) */
   authorUserId: string | null;
   /** user id of the book's assigned editor */
@@ -17,7 +17,7 @@ export type AccessResult = { allowed: true; reason: string } | { allowed: false;
 /** Pure rule for whether a viewer may read a given chapter. */
 export function canReadChapter(i: ChapterAccessInput): AccessResult {
   if (i.lockChapter == null || i.chapterNumber < i.lockChapter) return { allowed: true, reason: "FREE" };
-  if (!i.viewer) return { allowed: false, reason: "LOGIN_REQUIRED" };
+  if (!i.viewer || i.viewer.status === "BLOCKED") return { allowed: false, reason: "LOGIN_REQUIRED" };
   if (i.viewer.id === i.authorUserId) return { allowed: true, reason: "AUTHOR" };
   if (i.viewer.role === "ADMIN") return { allowed: true, reason: "ADMIN" };
   if (i.viewer.role === "EDITOR" && i.viewer.id === i.editorUserId) return { allowed: true, reason: "EDITOR" };

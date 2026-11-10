@@ -5,7 +5,7 @@ import { currentUser } from "@/lib/auth";
 import { formatCents } from "@/lib/money";
 import { ActionForm } from "@/components/ActionForm";
 import { Notice, StatusBadge, inputCls } from "@/components/ui";
-import { buyGiftCardAction, redeemGiftCardAction, transferAction } from "@/app/actions";
+import { appealAction, buyGiftCardAction, redeemGiftCardAction, transferAction } from "@/app/actions";
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ submitted?: string }> }) {
   const { submitted } = await searchParams;
@@ -25,8 +25,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       <header>
         <h1 className="text-2xl font-bold">Hi, {user.displayName}</h1>
         <p className="text-sm text-stone-500">{user.role.toLowerCase()} account{user.authorProfile && <> · ID {user.authorProfile.internalCode}</>}</p>
-        {user.status !== "ACTIVE" && <p className="mt-2 rounded bg-red-100 p-2 text-sm text-red-800">Your account is {user.status.toLowerCase()}: {user.statusReason}</p>}
       </header>
+      {user.status !== "ACTIVE" && <AccountStatusPanel userId={user.id} status={user.status} reason={user.statusReason} deletionAt={user.deletionScheduledAt} />}
 
       {submitted && <Notice tone="success">Thanks! Your book has been submitted. An editor will review it and leave you a message here.</Notice>}
       {user.role === "AUTHOR" && <Notice>Go to your <Link href="/author" className="underline">author dashboard</Link> to manage your books.</Notice>}
@@ -58,7 +58,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <ul>{wishlist.map((w) => <li key={w.bookId}><Link className="underline" href={`/books/${w.book.code}`}>{w.book.title}</Link></li>)}</ul>
       </section>
 
-      {wallet && (
+      {wallet && user.status !== "BLOCKED" && (
         <section>
           <h2 className="font-semibold">Wallet: {formatCents(wallet.balanceCents)}</h2>
           <p className="text-xs text-stone-500">Wallet funds can only be spent on books and cannot be withdrawn.</p>
@@ -67,7 +67,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
               <input name="email" type="email" placeholder="Friend's email" required className={inputCls} />
               <input name="amount" type="number" step="0.01" min="0.01" placeholder="Amount" required className={inputCls} />
             </ActionForm>
-            <ActionForm action={buyGiftCardAction} submitLabel="Buy gift card">
+            <ActionForm action={buyGiftCardAction} submitLabel="Buy gift card" inlineSuccess>
               <input name="amount" type="number" step="0.01" min="1" placeholder="Gift card amount" required className={inputCls} />
             </ActionForm>
             <ActionForm action={redeemGiftCardAction} submitLabel="Redeem gift card">
@@ -87,5 +87,27 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       )}
       {user.role === "READER" && <p><Link href="/become-an-author" className="underline">Want to become an author? See the requirements →</Link></p>}
     </div>
+  );
+}
+
+async function AccountStatusPanel({ userId, status, reason, deletionAt }: { userId: string; status: "RESTRICTED" | "BLOCKED"; reason: string | null; deletionAt: Date | null }) {
+  const appeals = await db.appeal.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: 5 });
+  const pending = appeals.find((a) => !a.resolved);
+  return (
+    <section className="space-y-3 rounded-lg border border-red-200 bg-red-50 p-5 text-red-950 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100">
+      <h2 className="font-semibold">{status === "BLOCKED" ? "Your account is blocked" : "Your account is restricted"}</h2>
+      <p className="text-sm"><b>Reason:</b> {reason}</p>
+      <p className="text-sm">
+        {status === "BLOCKED"
+          ? <>You can&apos;t buy, read paid chapters, comment or review. {deletionAt && <>Unless you appeal, the account will be deleted on <b>{deletionAt.toDateString()}</b>.</>}</>
+          : <>You can still read the books you bought, but you can&apos;t comment, review or submit books.</>}
+      </p>
+      {appeals.filter((a) => a.resolved).slice(0, 1).map((a) => <p key={a.id} className="text-sm"><b>Reply to your last appeal:</b> {a.resolution}</p>)}
+      {pending ? <p className="text-sm">Your appeal from {pending.createdAt.toDateString()} is waiting for review.</p> : (
+        <ActionForm action={appealAction} submitLabel="Send appeal">
+          <textarea name="message" required minLength={10} rows={3} placeholder="Explain why this should be reviewed" className={inputCls} />
+        </ActionForm>
+      )}
+    </section>
   );
 }

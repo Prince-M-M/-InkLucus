@@ -44,6 +44,13 @@ npm test
 - `src/lib/submissions.ts`: the submission → pool → review → publish workflow. New chapters on a published book are added to sections at a pro-rata price.
 - `src/lib/manuscript.ts`: splits a pasted manuscript into chapters at each `# ` heading.
 - `src/lib/guards.ts`: page and action access by role.
+- `src/lib/staff.ts`: account-type changes and editor handover.
+- `src/lib/moderation.ts`: flags, restrict/block, appeals, account deletion.
+- `src/lib/homepage.ts`: two-week homepage periods, proposals and approvals.
+
+## Scheduled jobs
+
+Call `POST /api/cron` once a day with `Authorization: Bearer $CRON_SECRET`. It expires old gift cards and deletes blocked accounts whose grace period has ended (unless an appeal is pending). Deleted accounts lose their personal data and public content, but purchase and wallet records are kept, anonymised, for accounting.
 - `src/lib/access.ts`: who can read which chapter.
 - `src/lib/rbac.ts`: permissions per role, including restricted and blocked accounts.
 
@@ -54,7 +61,10 @@ npm test
    - "I want to be an author" page with requirements and a submission form (manuscript paste, referral code).
    - Author dashboard: books, stats, editor contact and pen names. Authors can submit new books and post chapters.
    - Editor dashboard: submission pool, claim, accept or reject with a message, return to pool with new genres, pen names, signing up authors, and publishing with contract, lock chapter, prices and sections.
-3. Admin: staff accounts, role changes, flags/restrict/block/appeals, homepage scheduling (2 weeks ahead)
+3. ✅ Admin:
+   - Accounts: search, create staff accounts, change account types (with safety rules) and hand an editor's work to another editor.
+   - Moderation: "Report" on comments, a flagged-accounts list, restrict or block with a reason, appeals, and automatic deletion of blocked accounts after a grace period.
+   - Homepage: editors propose books every two weeks and admins approve them for the current or next period (max 12 per list).
 4. Accounting: royalty statements, wallet and gift-card reserves reports
 5. Statistics dashboards for readers, authors, editors and admins
 6. Payment provider integration (Paynow, Stripe)

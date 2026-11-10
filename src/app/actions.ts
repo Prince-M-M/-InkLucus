@@ -5,8 +5,10 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { createSession, currentUser, destroySession, hashPassword, verifyPassword } from "@/lib/auth";
 import { DomainError } from "@/lib/errors";
+import { runAction } from "@/lib/form";
 import { buyGiftCard, purchaseBook, redeemGiftCard, transfer } from "@/lib/wallet";
 import { can } from "@/lib/rbac";
+import { flagUser, submitAppeal } from "@/lib/moderation";
 
 import type { FormState } from "@/lib/form";
 export type { FormState };
@@ -37,16 +39,7 @@ export async function logout() {
   redirect("/");
 }
 
-async function run(fn: () => Promise<unknown>, ok: string): Promise<FormState> {
-  try {
-    await fn();
-    revalidatePath("/", "layout");
-    return { ok };
-  } catch (e) {
-    if (e instanceof DomainError) return { error: e.message };
-    throw e;
-  }
-}
+const run = runAction;
 
 async function requireUser() {
   const user = await currentUser();
@@ -105,4 +98,15 @@ export async function postComment(form: FormData) {
   const isAuthor = !!chapter.book.penName && chapter.book.penName.authorId === user.authorProfile?.id;
   await db.comment.create({ data: { chapterId, userId: user.id, body, parentId: (form.get("parentId") as string) || null, asPenNameId: isAuthor ? chapter.book.penNameId : null } });
   revalidatePath(`/books/${chapter.book.code}/${chapter.number}`);
+}
+
+export async function flagAction(_: FormState, form: FormData): Promise<FormState> {
+  const user = await requireUser();
+  return run(() => flagUser(user.id, String(form.get("targetId")), String(form.get("reason") ?? ""), (form.get("commentId") as string) || undefined), "Thanks, our team will look into it.");
+}
+
+export async function appealAction(_: FormState, form: FormData): Promise<FormState> {
+  const user = await currentUser();
+  if (!user) redirect("/login");
+  return run(() => submitAppeal(user.id, String(form.get("message") ?? "")), "Appeal sent. An admin will review it.");
 }

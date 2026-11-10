@@ -5,6 +5,7 @@ import { currentUser } from "@/lib/auth";
 import { canReadChapter } from "@/lib/access";
 import { can } from "@/lib/rbac";
 import { ReadAloud } from "@/components/ReadAloud";
+import { ReportButton } from "@/components/ReportButton";
 import { postComment } from "@/app/actions";
 
 export default async function ChapterPage({ params }: { params: Promise<{ code: string; chapter: string }> }) {
@@ -80,8 +81,9 @@ export default async function ChapterPage({ params }: { params: Promise<{ code: 
               <li key={c.id}>
                 <p className="text-sm">{label(c)}</p>
                 <p>{c.body}</p>
+                {user && user.id !== c.userId && <ReportButton targetId={c.userId} commentId={c.id} />}
                 <ul className="ml-6 mt-2 space-y-2">
-                  {c.replies.map((r) => <li key={r.id}><p className="text-sm">{label(r)}</p><p>{r.body}</p></li>)}
+                  {c.replies.map((r) => <li key={r.id}><p className="text-sm">{label(r)}</p><p>{r.body}</p>{user && user.id !== r.userId && <ReportButton targetId={r.userId} commentId={r.id} />}</li>)}
                 </ul>
               </li>
             ))}

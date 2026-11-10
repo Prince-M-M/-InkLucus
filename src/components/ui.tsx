@@ -53,3 +53,4 @@ export function Notice({ tone = "info", children }: { tone?: "info" | "success" 
   const cls = { info: "bg-sky-50 text-sky-900 border-sky-200", success: "bg-green-50 text-green-900 border-green-200", warn: "bg-amber-50 text-amber-900 border-amber-200" }[tone];
   return <div className={`rounded-md border p-3 text-sm ${cls}`}>{children}</div>;
 }
+export const ACCOUNT_STATUS_STYLE = { ACTIVE: "text-green-700", RESTRICTED: "text-amber-700", BLOCKED: "text-red-700" } as const;

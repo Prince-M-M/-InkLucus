@@ -400,18 +400,27 @@ model Flag {
   targetId   String
   reporterId String
   reason     String
+  commentId  String? // what prompted the flag, if anything
   createdAt  DateTime @default(now())
   target     User     @relation("FlagTarget", fields: [targetId], references: [id])
   reporter   User     @relation("FlagReporter", fields: [reporterId], references: [id])
+
+  @@unique([targetId, reporterId]) // one flag per reporter per account
 }
 
 model Appeal {
-  id        String   @id @default(cuid())
-  userId    String
-  message   String
-  resolved  Boolean  @default(false)
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id])
+  id           String    @id @default(cuid())
+  userId       String
+  message      String
+  resolved     Boolean   @default(false)
+  reinstated   Boolean?
+  resolution   String? // admin's reply, shown to the user
+  resolvedById String?
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  user         User      @relation(fields: [userId], references: [id])
+
+  @@index([resolved, createdAt])
 }
 
 // ───────────────────────────── Homepage curation ─────────────────────────────
@@ -444,6 +453,7 @@ model HomepageSlot {
   proposedBy   EditorProfile @relation("SlotProposer", fields: [proposedById], references: [id])
 
   @@index([list, status, startsAt, endsAt])
+  @@unique([list, bookId, startsAt])
 }
 
 model SocialLink {
