@@ -8,7 +8,8 @@ import { DomainError } from "@/lib/errors";
 import { buyGiftCard, purchaseBook, redeemGiftCard, transfer } from "@/lib/wallet";
 import { can } from "@/lib/rbac";
 
-export type FormState = { error?: string; ok?: string } | undefined;
+import type { FormState } from "@/lib/form";
+export type { FormState };
 
 const credentials = z.object({ email: z.string().email().transform((e) => e.toLowerCase()), password: z.string().min(8) });
 

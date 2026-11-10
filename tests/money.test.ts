@@ -97,7 +97,7 @@ describe("authors & submissions", () => {
       const u = await user(`e${i}@x.com`, "EDITOR");
       return db.editorProfile.create({ data: { userId: u.id, contactEmail: u.email, genres: [], languages: [] } });
     }));
-    const book = await submitBook(r.id, { title: "T", synopsis: "s", language: "sn", genres: ["Romance"] });
+    const book = await submitBook(r.id, { title: "T", synopsis: "s", language: "sn", genres: ["Romance"], chapters: [{ title: "One", content: "Text" }] });
     expect(book.status).toBe("IN_POOL");
     const res = await Promise.allSettled(eds.map((e) => claimFromPool(book.id, e.id)));
     expect(res.filter((x) => x.status === "fulfilled")).toHaveLength(1);

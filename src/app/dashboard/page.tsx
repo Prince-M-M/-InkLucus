@@ -3,18 +3,21 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { formatCents } from "@/lib/money";
-import { ActionForm, inputCls } from "@/components/ActionForm";
+import { ActionForm } from "@/components/ActionForm";
+import { Notice, StatusBadge, inputCls } from "@/components/ui";
 import { buyGiftCardAction, redeemGiftCardAction, transferAction } from "@/app/actions";
 
-export default async function Dashboard() {
+export default async function Dashboard({ searchParams }: { searchParams: Promise<{ submitted?: string }> }) {
+  const { submitted } = await searchParams;
   const user = await currentUser();
   if (!user) redirect("/login");
 
-  const [wallet, library, wishlist, socials] = await Promise.all([
+  const [wallet, library, wishlist, socials, submissions] = await Promise.all([
     db.wallet.findUnique({ where: { userId: user.id }, include: { entries: { orderBy: { createdAt: "desc" }, take: 10 } } }),
     db.readingProgress.findMany({ where: { userId: user.id }, include: { book: { select: { code: true, title: true, _count: { select: { chapters: true } } } } }, orderBy: { updatedAt: "desc" } }),
     db.wishlistItem.findMany({ where: { userId: user.id }, include: { book: { select: { code: true, title: true } } } }),
     db.socialLink.findMany({ where: { audience: user.role } }),
+    db.book.findMany({ where: { submitterId: user.id }, orderBy: { createdAt: "desc" }, select: { id: true, title: true, status: true, decisionMessage: true, createdAt: true } }),
   ]);
 
   return (
@@ -24,6 +27,22 @@ export default async function Dashboard() {
         <p className="text-sm text-stone-500">{user.role.toLowerCase()} account{user.authorProfile && <> · ID {user.authorProfile.internalCode}</>}</p>
         {user.status !== "ACTIVE" && <p className="mt-2 rounded bg-red-100 p-2 text-sm text-red-800">Your account is {user.status.toLowerCase()}: {user.statusReason}</p>}
       </header>
+
+      {submitted && <Notice tone="success">Thanks! Your book has been submitted. An editor will review it and leave you a message here.</Notice>}
+      {user.role === "AUTHOR" && <Notice>Go to your <Link href="/author" className="underline">author dashboard</Link> to manage your books.</Notice>}
+      {(user.role === "EDITOR" || user.role === "ADMIN") && <Notice>Go to the <Link href="/editor" className="underline">editor dashboard</Link>.</Notice>}
+
+      {user.role === "READER" && submissions.length > 0 && (
+        <section>
+          <h2 className="mb-2 font-semibold">Your submissions</h2>
+          <ul className="space-y-3">{submissions.map((b) => (
+            <li key={b.id} className="rounded-md border border-stone-200 p-3 dark:border-stone-800">
+              <div className="flex flex-wrap items-center gap-2"><b>{b.title}</b><StatusBadge status={b.status} /><span className="text-xs text-stone-500">{b.createdAt.toDateString()}</span></div>
+              {b.decisionMessage && <p className="mt-1 text-sm"><span className="text-stone-500">Editor&apos;s message:</span> {b.decisionMessage}</p>}
+            </li>
+          ))}</ul>
+        </section>
+      )}
 
       <section>
         <h2 className="mb-2 font-semibold">Continue reading</h2>

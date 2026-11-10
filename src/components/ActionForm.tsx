@@ -1,6 +1,6 @@
 "use client";
 import { useActionState } from "react";
-import type { FormState } from "@/app/actions";
+import type { FormState } from "@/lib/form";
 
 export function ActionForm({
   action,
@@ -26,4 +26,3 @@ export function ActionForm({
   );
 }
 
-export const inputCls = "rounded-md border border-stone-300 bg-transparent px-3 py-2 dark:border-stone-700";

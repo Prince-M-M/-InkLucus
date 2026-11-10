@@ -1,4 +1,5 @@
-import { ActionForm, inputCls } from "@/components/ActionForm";
+import { ActionForm } from "@/components/ActionForm";
+import { inputCls } from "@/components/ui";
 import { register } from "@/app/actions";
 
 export default function RegisterPage() {

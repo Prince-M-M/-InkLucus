@@ -41,14 +41,19 @@ npm test
 - `prisma/schema.prisma`: the full data model, including roles, pen names, the submission pool, sections, the wallet ledger, gift cards, homepage curation and moderation.
 - `src/lib/wallet.ts`: top-ups, transfers, gift cards and purchases. Every balance change has an entry in an append-only ledger, and debits can't overdraw.
 - `src/lib/authors.ts`: author identity codes (`AA1234-006109`) and the 5-pen-name limit.
-- `src/lib/submissions.ts`: the editor pool (claim / return / accept / reject) and publishing with lock chapter and sections.
+- `src/lib/submissions.ts`: the submission → pool → review → publish workflow. New chapters on a published book are added to sections at a pro-rata price.
+- `src/lib/manuscript.ts`: splits a pasted manuscript into chapters at each `# ` heading.
+- `src/lib/guards.ts`: page and action access by role.
 - `src/lib/access.ts`: who can read which chapter.
 - `src/lib/rbac.ts`: permissions per role, including restricted and blocked accounts.
 
 ## Roadmap
 
 1. ✅ Data model, wallet, gift cards, sections, chapter access, reader pages, comments with Author badge
-2. Author submission form and "I want to be an author" page; editor dashboard (pool, review, publish, pen names)
+2. ✅ Author submissions and editor workflow:
+   - "I want to be an author" page with requirements and a submission form (manuscript paste, referral code).
+   - Author dashboard: books, stats, editor contact and pen names. Authors can submit new books and post chapters.
+   - Editor dashboard: submission pool, claim, accept or reject with a message, return to pool with new genres, pen names, signing up authors, and publishing with contract, lock chapter, prices and sections.
 3. Admin: staff accounts, role changes, flags/restrict/block/appeals, homepage scheduling (2 weeks ahead)
 4. Accounting: royalty statements, wallet and gift-card reserves reports
 5. Statistics dashboards for readers, authors, editors and admins

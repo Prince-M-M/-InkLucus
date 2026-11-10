@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { ActionForm, inputCls } from "@/components/ActionForm";
+import { ActionForm } from "@/components/ActionForm";
+import { inputCls } from "@/components/ui";
 import { login } from "@/app/actions";
 
 export default function LoginPage() {

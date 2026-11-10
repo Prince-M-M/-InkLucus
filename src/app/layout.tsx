@@ -15,9 +15,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <nav className="mx-auto flex max-w-6xl items-center gap-5 px-4 py-3">
             <Link href="/" className="font-bold">Bookplatform</Link>
             <Link href="/browse" className="text-sm">Browse</Link>
+            <Link href="/become-an-author" className="hidden text-sm sm:inline">Write with us</Link>
             <div className="ml-auto flex items-center gap-4 text-sm">
               {user ? (
                 <>
+                  {user.role === "AUTHOR" && <Link href="/author">Author</Link>}
+                  {(user.role === "EDITOR" || user.role === "ADMIN") && <Link href="/editor">Editor</Link>}
                   <Link href="/dashboard">Dashboard</Link>
                   <form action={logout}><button>Log out</button></form>
                 </>

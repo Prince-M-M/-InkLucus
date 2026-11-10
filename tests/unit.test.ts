@@ -56,3 +56,21 @@ describe("rbac", () => {
     expect(can({ role: "ADMIN", status: "ACTIVE" }, "book:manage")).toBe(true);
   });
 });
+
+import { parseManuscript, countWords } from "@/lib/manuscript";
+describe("manuscript parser", () => {
+  it("splits on '# ' headings", () => {
+    expect(parseManuscript("# Chapter 1: Rain\nIt rained.\n\n# Chapter 2\r\nSun.")).toEqual([
+      { title: "Chapter 1: Rain", content: "It rained." },
+      { title: "Chapter 2", content: "Sun." },
+    ]);
+  });
+  it("treats text without headings as chapter 1 and drops empty chapters", () => {
+    expect(parseManuscript("Just text")).toEqual([{ title: "Chapter 1", content: "Just text" }]);
+    expect(parseManuscript("# Empty\n\n# Real\nwords")).toEqual([{ title: "Real", content: "words" }]);
+  });
+  it("does not treat '#hashtag' as a heading", () => {
+    expect(parseManuscript("#love is\nreal")).toHaveLength(1);
+  });
+  it("counts words", () => expect(countWords("  one two\nthree ")).toBe(3));
+});

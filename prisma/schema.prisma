@@ -180,6 +180,7 @@ model Book {
   editorId          String?
   reviewingEditorId String?
   submissionNote    String?
+  referralCode      String? // scout/campaign code given at submission; used if the submitter becomes an author
   decisionMessage   String? // message left on the submitter's account
 
   submitter       User           @relation("Submitter", fields: [submitterId], references: [id])

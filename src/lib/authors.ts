@@ -38,8 +38,24 @@ export async function promoteToAuthor(opts: { userId: string; actorUserId: strin
   });
 }
 
-export async function addPenName(authorId: string, name: string, editorId?: string) {
+export async function addPenName(authorId: string, name: string, editorId?: string, bio?: string) {
+  const clean = name.trim();
+  if (clean.length < 2 || clean.length > 60) throw new DomainError("INVALID", "Pen names must be 2–60 characters");
   const count = await db.penName.count({ where: { authorId } });
   if (count >= MAX_PEN_NAMES) throw new DomainError("LIMIT", `Authors can have at most ${MAX_PEN_NAMES} pen names`);
-  return db.penName.create({ data: { authorId, name: name.trim(), slug: slugify(name), editorId } });
+  const slug = slugify(clean);
+  if (!slug) throw new DomainError("INVALID", "Pen name needs letters or numbers");
+  if (await db.penName.findFirst({ where: { OR: [{ slug }, { name: { equals: clean, mode: "insensitive" } }] } })) {
+    throw new DomainError("CONFLICT", "That pen name is already taken");
+  }
+  return db.penName.create({ data: { authorId, name: clean, slug, editorId, bio: bio?.trim() || null } });
+}
+
+/** Pen names are managed by editors. An editor may manage pen names of their own authors; admins of anyone. */
+export async function assertCanManageAuthor(actor: { role: string; editorProfile: { id: string } | null }, authorId: string) {
+  if (actor.role === "ADMIN") return;
+  const author = await db.authorProfile.findUnique({ where: { id: authorId } });
+  if (!author || !actor.editorProfile || author.editorId !== actor.editorProfile.id) {
+    throw new DomainError("FORBIDDEN", "This author is not assigned to you");
+  }
 }
