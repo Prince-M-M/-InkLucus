@@ -1,30 +1,26 @@
 import "server-only";
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
-import bcrypt from "bcryptjs";
 import { db } from "./db";
+import { config } from "./config";
+
+export { hashPassword, verifyPassword } from "./password";
 
 const COOKIE = "session";
 const MAX_AGE = 60 * 60 * 24 * 30;
 
-function secret() {
-  const s = process.env.SESSION_SECRET;
-  if (!s || s.length < 32) throw new Error("SESSION_SECRET must be set (>= 32 chars)");
-  return new TextEncoder().encode(s);
-}
+const secret = () => new TextEncoder().encode(config().SESSION_SECRET);
 
-export const hashPassword = (pw: string) => bcrypt.hash(pw, 12);
-export const verifyPassword = (pw: string, hash: string) => bcrypt.compare(pw, hash);
-
-export async function createSession(userId: string) {
-  const token = await new SignJWT({ sub: userId })
+export async function createSession(user: { id: string; sessionVersion: number }) {
+  const token = await new SignJWT({ sub: user.id, v: user.sessionVersion })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${MAX_AGE}s`)
     .sign(secret());
   (await cookies()).set(COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: config().APP_URL.startsWith("https://"),
     sameSite: "lax",
     path: "/",
     maxAge: MAX_AGE,
@@ -35,15 +31,22 @@ export async function destroySession() {
   (await cookies()).delete(COOKIE);
 }
 
-/** Current user, or null for visitors (no registration needed). */
-export async function currentUser() {
+/** Invalidates every existing session of a user (password change, block, "log out everywhere"). */
+export async function revokeSessions(userId: string) {
+  return db.user.update({ where: { id: userId }, data: { sessionVersion: { increment: 1 } } });
+}
+
+/** Current user, or null for visitors. Cached per request. */
+export const currentUser = cache(async () => {
   const token = (await cookies()).get(COOKIE)?.value;
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify(token, secret());
-    if (!payload.sub) return null;
-    return db.user.findUnique({ where: { id: payload.sub }, include: { authorProfile: true, editorProfile: true } });
+    const { payload } = await jwtVerify(token, secret(), { algorithms: ["HS256"] });
+    if (typeof payload.sub !== "string") return null;
+    const user = await db.user.findUnique({ where: { id: payload.sub }, include: { authorProfile: true, editorProfile: true } });
+    if (!user || user.sessionVersion !== payload.v || user.email.endsWith("@deleted.invalid")) return null;
+    return user;
   } catch {
     return null;
   }
-}
+});

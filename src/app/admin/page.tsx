@@ -7,11 +7,16 @@ import { LIST_LABELS, MAX_APPROVED_PER_LIST, schedulablePeriods } from "@/lib/ho
 import { LANGUAGES } from "@/lib/catalog";
 import { ActionForm } from "@/components/ActionForm";
 import { Card, Field, Notice, ACCOUNT_STATUS_STYLE, btnOutlineCls, inputCls } from "@/components/ui";
-import { adminProposeAction, createStaffAction, reassignEditorAction, resolveAppealAction, reviewSlotAction } from "./actions";
+import { addSocialLinkAction, adminProposeAction, createStaffAction, reassignEditorAction, removeSocialLinkAction, resolveAppealAction, reviewSlotAction } from "./actions";
+import { editorPerformance, salesStats } from "@/lib/stats";
+import { reportPeriod, REPORT_PERIODS } from "@/lib/periods";
+import { formatCents } from "@/lib/money";
+import { PLATFORMS } from "@/lib/social";
+import { SalesStatsView } from "@/components/SalesStatsView";
 
-const TABS = [["overview", "Overview"], ["users", "Accounts"], ["moderation", "Moderation"], ["homepage", "Homepage"]] as const;
+const TABS = [["overview", "Overview"], ["stats", "Statistics"], ["users", "Accounts"], ["moderation", "Moderation"], ["homepage", "Homepage"], ["community", "Community links"]] as const;
 type Tab = (typeof TABS)[number][0];
-type SP = { tab?: string; q?: string; role?: string; status?: string; period?: string; error?: string };
+type SP = { tab?: string; q?: string; role?: string; status?: string; period?: string; error?: string; range?: string };
 
 
 export default async function AdminPage({ searchParams }: { searchParams: Promise<SP> }) {
@@ -36,6 +41,8 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
       {tab === "users" && <Users sp={sp} />}
       {tab === "moderation" && <Moderation />}
       {tab === "homepage" && <Homepage period={sp.period} />}
+      {tab === "stats" && <AdminStats period={sp.range} />}
+      {tab === "community" && <Community />}
     </div>
   );
 }
@@ -222,6 +229,64 @@ async function Homepage({ period }: { period?: string }) {
           <input type="hidden" name="period" value={active.start.toISOString()} />
           <Field label="Book code"><input name="bookCode" required placeholder="BK…" className={`${inputCls} uppercase`} /></Field>
           <Field label="List"><select name="list" className={inputCls}>{lists.map((l) => <option key={l} value={l}>{LIST_LABELS[l]}</option>)}</select></Field>
+        </ActionForm>
+      </Card>
+    </div>
+  );
+}
+
+async function AdminStats({ period }: { period?: string }) {
+  const p = reportPeriod(period);
+  const [s, perf] = await Promise.all([salesStats("all", p), editorPerformance(p)]);
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap gap-2">
+        {REPORT_PERIODS.map(([k, label]) => (
+          <Link key={k} href={`/admin?tab=stats&range=${k}`} className={`rounded-full border px-3 py-1 text-xs ${p.key === k ? "border-stone-900 bg-stone-900 text-white dark:border-stone-100 dark:bg-stone-100 dark:text-stone-900" : "border-stone-300 dark:border-stone-700"}`}>{label}</Link>
+        ))}
+      </div>
+      <Card title={`Editor performance · ${p.label}`}>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm tabular-nums">
+            <thead className="text-left text-xs uppercase text-stone-500"><tr><th className="py-1">Editor</th><th>New books taken on</th><th>On sale</th><th>Copies</th><th>Sales</th><th>New wishlists</th><th>Reviews (avg)</th><th>New readers</th></tr></thead>
+            <tbody>{perf.map((e) => (
+              <tr key={e.editorId} className="border-t border-stone-100 dark:border-stone-900">
+                <td className="py-1.5">{e.name}</td><td>{e.newBooksTaken}</td><td>{e.booksOnSale}</td><td>{e.copies}</td><td>{formatCents(e.cents)}</td><td>{e.wishlists}</td>
+                <td>{e.reviews}{e.avgRating != null && ` (${e.avgRating.toFixed(1)})`}</td><td>{e.views}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-xs text-stone-500">“New readers” counts first-time chapter reads in the period.</p>
+      </Card>
+      <SalesStatsView s={s} />
+    </div>
+  );
+}
+
+async function Community() {
+  const links = await db.socialLink.findMany({ orderBy: [{ audience: "asc" }, { createdAt: "asc" }] });
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-stone-500">Discord, Facebook, WhatsApp and other group links shown on dashboards. Choose which account type sees each link.</p>
+      <Card title="Links">
+        {links.length === 0 ? <p className="text-sm text-stone-500">No links yet.</p> : (
+          <ul className="divide-y divide-stone-200 text-sm dark:divide-stone-800">{links.map((l) => (
+            <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <span><b>{l.label}</b> <span className="text-stone-500">· {l.platform} · shown to {l.audience.toLowerCase()}s</span><br /><a href={l.url} className="break-all text-xs underline" target="_blank" rel="noopener noreferrer">{l.url}</a></span>
+              <form action={removeSocialLinkAction}><input type="hidden" name="id" value={l.id} /><button className="text-xs underline">Remove</button></form>
+            </li>
+          ))}</ul>
+        )}
+      </Card>
+      <Card title="Add a link">
+        <ActionForm action={addSocialLinkAction} submitLabel="Add link">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Label"><input name="label" required placeholder="Readers' Discord" className={inputCls} /></Field>
+            <Field label="Platform"><select name="platform" className={inputCls}>{PLATFORMS.map((p) => <option key={p}>{p}</option>)}</select></Field>
+            <Field label="Shown to"><select name="audience" className={inputCls}>{["READER", "AUTHOR", "EDITOR", "ACCOUNTING", "ADMIN"].map((r) => <option key={r} value={r}>{r.toLowerCase()}s</option>)}</select></Field>
+            <Field label="Link"><input name="url" type="url" required placeholder="https://discord.gg/…" className={inputCls} /></Field>
+          </div>
         </ActionForm>
       </Card>
     </div>

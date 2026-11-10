@@ -71,3 +71,20 @@ export async function adminProposeAction(_: FormState, form: FormData): Promise<
     "/admin",
   );
 }
+
+export async function addSocialLinkAction(_: FormState, form: FormData): Promise<FormState> {
+  const admin = await requireRole("ADMIN");
+  const { addSocialLink } = await import("@/lib/social");
+  return runAction(
+    () => addSocialLink(admin.id, { audience: str(form, "audience") as Role, platform: str(form, "platform"), label: str(form, "label"), url: str(form, "url") }),
+    "Link added.",
+    "/admin",
+  );
+}
+
+export async function removeSocialLinkAction(form: FormData) {
+  const admin = await requireRole("ADMIN");
+  const { removeSocialLink } = await import("@/lib/social");
+  await removeSocialLink(admin.id, str(form, "id"));
+  redirect("/admin?tab=community");
+}

@@ -121,7 +121,7 @@ export async function decide(bookId: string, editorProfileId: string, accept: bo
   }
   return db.book.update({
     where: { id: bookId },
-    data: { status: accept ? "ACCEPTED" : "REJECTED", decisionMessage: message.trim(), editorId: accept ? editorProfileId : null },
+    data: { status: accept ? "ACCEPTED" : "REJECTED", decisionMessage: message.trim(), editorId: accept ? editorProfileId : null, acceptedAt: accept ? new Date() : null },
   });
 }
 

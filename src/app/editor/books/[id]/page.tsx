@@ -7,7 +7,8 @@ import { formatCents } from "@/lib/money";
 import { ActionForm } from "@/components/ActionForm";
 import { ManuscriptView } from "@/components/ManuscriptView";
 import { Card, Field, Notice, StatusBadge, btnCls, inputCls } from "@/components/ui";
-import { addPenNameAction, claimAction, decideAction, publishAction, returnToPoolAction, unlistAction } from "@/app/editor/actions";
+import { addMediaAction, addPenNameAction, claimAction, decideAction, linkEditionAction, mediaPricingAction, publishAction, removeMediaAction, returnToPoolAction, unlinkEditionAction, unlistAction, uploadCoverAction } from "@/app/editor/actions";
+import { Cover } from "@/components/Cover";
 
 const AGE: Record<string, string> = { ALL: "All ages", TEEN_13: "13+", MATURE_16: "16+", ADULT_18: "18+" };
 
@@ -21,6 +22,7 @@ export default async function EditorBook({ params }: { params: Promise<{ id: str
       penName: true,
       reviewingEditor: { include: { user: true } },
       editor: { include: { user: true } },
+      media: { orderBy: [{ kind: "asc" }, { number: "asc" }] },
       chapters: { orderBy: { number: "asc" } },
       sections: { orderBy: { index: "asc" } },
       contracts: true,
@@ -33,6 +35,8 @@ export default async function EditorBook({ params }: { params: Promise<{ id: str
   if (!visible) notFound();
 
   const author = book.submitter.authorProfile;
+  const editions = book.editionGroup ? await db.book.findMany({ where: { editionGroup: book.editionGroup, id: { not: book.id } }, select: { code: true, title: true, language: true } }) : [];
+  const canSetup = (isEditor || user.role === "ADMIN") && ["ACCEPTED", "ON_SALE", "UNLISTED"].includes(book.status);
   const contract = book.contracts[0];
   const defaultSigned = (contract?.signedAt ?? new Date()).toISOString().slice(0, 10);
 
@@ -144,6 +148,51 @@ export default async function EditorBook({ params }: { params: Promise<{ id: str
             <Link href={`/books/${book.code}`} className="mb-3 block text-sm underline">View public page</Link>
             <ActionForm action={unlistAction} submitLabel="Unlist book"><input type="hidden" name="bookId" value={book.id} /></ActionForm>
           </Card>
+        )}
+        {canSetup && (
+          <>
+            <Card title="Cover">
+              <div className="mb-3 w-28"><Cover url={book.coverUrl} title={book.title} /></div>
+              <ActionForm action={uploadCoverAction} submitLabel="Upload cover">
+                <input type="hidden" name="bookId" value={book.id} />
+                <input type="file" name="cover" accept="image/jpeg,image/png,image/webp" required className="text-sm" />
+                <p className="text-xs text-stone-500">JPEG, PNG or WebP, up to 2 MB. Portrait 2:3 works best.</p>
+              </ActionForm>
+            </Card>
+            <Card title="Language editions">
+              {editions.length > 0 && <ul className="mb-3 text-sm">{editions.map((e) => <li key={e.code}>{LANGUAGES[e.language] ?? e.language}: {e.title} <span className="font-mono text-xs text-stone-500">{e.code}</span></li>)}</ul>}
+              <ActionForm action={linkEditionAction} submitLabel="Link edition">
+                <input type="hidden" name="bookId" value={book.id} />
+                <Field label="Book code of the same story in another language"><input name="otherCode" required placeholder="BK…" className={`${inputCls} uppercase`} /></Field>
+              </ActionForm>
+              {book.editionGroup && <form action={unlinkEditionAction} className="mt-2"><input type="hidden" name="bookId" value={book.id} /><button className="text-xs underline">Unlink this book</button></form>}
+            </Card>
+            <Card title="Audiobook & video">
+              <ActionForm action={mediaPricingAction} submitLabel="Save prices">
+                <input type="hidden" name="bookId" value={book.id} />
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Audiobook ($)"><input name="audioPrice" inputMode="decimal" defaultValue={book.audioPriceCents != null ? (book.audioPriceCents / 100).toFixed(2) : ""} className={inputCls} /></Field>
+                  <Field label="Video ($)"><input name="videoPrice" inputMode="decimal" defaultValue={book.videoPriceCents != null ? (book.videoPriceCents / 100).toFixed(2) : ""} className={inputCls} /></Field>
+                </div>
+                <Field label="Video discount for book owners (%)"><input name="discount" type="number" min={0} max={100} defaultValue={book.videoDiscountPercentForOwners} className={inputCls} /></Field>
+              </ActionForm>
+              <ul className="my-4 space-y-1 text-sm">
+                {book.media.map((m) => (
+                  <li key={m.id} className="flex items-center justify-between gap-2">
+                    <span>{m.kind === "AUDIO" ? "🎧" : "▶"} {m.number}. {m.title}</span>
+                    <form action={removeMediaAction}><input type="hidden" name="mediaId" value={m.id} /><input type="hidden" name="bookId" value={book.id} /><button className="text-xs underline">Remove</button></form>
+                  </li>
+                ))}
+                {book.media.length === 0 && <li className="text-stone-500">No tracks yet. The Listen/Watch buttons appear once a track and a price are set.</li>}
+              </ul>
+              <ActionForm action={addMediaAction} submitLabel="Add track">
+                <input type="hidden" name="bookId" value={book.id} />
+                <Field label="Type"><select name="kind" className={inputCls}><option value="AUDIO">Audio</option><option value="VIDEO">Video</option></select></Field>
+                <Field label="Title"><input name="title" required className={inputCls} /></Field>
+                <Field label="File link (https)" hint="Host files on private storage (e.g. Cloudflare R2, S3). Readers only get the link after access is checked."><input name="url" type="url" required className={inputCls} /></Field>
+              </ActionForm>
+            </Card>
+          </>
         )}
       </aside>
     </div>

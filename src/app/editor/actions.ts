@@ -8,6 +8,10 @@ import { claimFromPool, decide, putOnSale, returnToPool, unlist } from "@/lib/su
 import { addPenName, assertCanManageAuthor, promoteToAuthor } from "@/lib/authors";
 import { DomainError } from "@/lib/errors";
 import { dollarsToCents, flash, int, list, optStr, runAction, str, type FormState } from "@/lib/form";
+import type { MediaKind } from "@prisma/client";
+import { addMedia, linkEdition, removeMedia, setMediaPricing, unlinkEdition } from "@/lib/media";
+import { deleteUpload, saveCover } from "@/lib/uploads";
+import { LIMITS, rateLimit } from "@/lib/rate-limit";
 
 export async function claimAction(form: FormData) {
   const { editor } = await requireEditor();
@@ -107,4 +111,60 @@ export async function withdrawProposalAction(form: FormData) {
   const { editor } = await requireEditor();
   await withdrawProposal(editor.id, str(form, "slotId")).catch(() => undefined);
   redirect("/editor?tab=homepage");
+}
+
+
+async function editorOfBook(bookId: string) {
+  const { user, editor } = await requireEditor();
+  const book = await db.book.findUnique({ where: { id: bookId } });
+  if (!book || (user.role !== "ADMIN" && book.editorId !== editor.id)) throw new DomainError("FORBIDDEN", "Not your book");
+  return { user, editor, book };
+}
+
+export async function uploadCoverAction(_: FormState, form: FormData): Promise<FormState> {
+  const bookId = str(form, "bookId");
+  return runAction(async () => {
+    const { user, book } = await editorOfBook(bookId);
+    if (!(await rateLimit(`upload:${user.id}`, LIMITS.upload.limit, LIMITS.upload.window))) throw new DomainError("LIMIT", "Too many uploads. Try again later.");
+    const file = form.get("cover");
+    if (!(file instanceof File)) throw new DomainError("INVALID", "Choose an image");
+    const url = await saveCover(book.id, file);
+    await db.book.update({ where: { id: book.id }, data: { coverUrl: url } });
+    await deleteUpload(book.coverUrl);
+  }, "Cover updated.", `/editor/books/${bookId}`);
+}
+
+export async function addMediaAction(_: FormState, form: FormData): Promise<FormState> {
+  const { user } = await requireEditor();
+  const bookId = str(form, "bookId");
+  const kind = (str(form, "kind") === "VIDEO" ? "VIDEO" : "AUDIO") as MediaKind;
+  return runAction(() => addMedia(user, bookId, kind, str(form, "title"), str(form, "url")), "Track added.", `/editor/books/${bookId}`);
+}
+
+export async function removeMediaAction(form: FormData) {
+  const { user } = await requireEditor();
+  await removeMedia(user, str(form, "mediaId")).catch(() => undefined);
+  redirect(`/editor/books/${str(form, "bookId")}`);
+}
+
+export async function mediaPricingAction(_: FormState, form: FormData): Promise<FormState> {
+  const { user } = await requireEditor();
+  const bookId = str(form, "bookId");
+  const price = (k: string) => (str(form, k) ? dollarsToCents(str(form, k)) : null);
+  const audio = price("audioPrice"), video = price("videoPrice");
+  if (Number.isNaN(audio ?? 0) || Number.isNaN(video ?? 0)) return { error: "Prices must look like 4.99" };
+  const discount = str(form, "discount") ? int(form, "discount") : 0;
+  return runAction(() => setMediaPricing(user, bookId, { audioPriceCents: audio, videoPriceCents: video, videoDiscountPercentForOwners: discount }), "Prices saved.", `/editor/books/${bookId}`);
+}
+
+export async function linkEditionAction(_: FormState, form: FormData): Promise<FormState> {
+  const { user } = await requireEditor();
+  const bookId = str(form, "bookId");
+  return runAction(() => linkEdition(user, bookId, str(form, "otherCode")), "Editions linked.", `/editor/books/${bookId}`);
+}
+
+export async function unlinkEditionAction(form: FormData) {
+  const { user } = await requireEditor();
+  await unlinkEdition(user, str(form, "bookId")).catch(() => undefined);
+  redirect(`/editor/books/${str(form, "bookId")}`);
 }

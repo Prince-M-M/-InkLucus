@@ -2,8 +2,12 @@ import type { LedgerType } from "@prisma/client";
 import { db, type Tx } from "./db";
 import { DomainError } from "./errors";
 import { newGiftCardCode } from "./codes";
+import { checkAge } from "./age";
+import { config } from "./config";
 
-export const GIFT_CARD_VALIDITY_DAYS = 365;
+export const MIN_TOP_UP_CENTS = 100;
+export const MAX_TOP_UP_CENTS = 50_000;
+export const MAX_TRANSFER_CENTS = 50_000;
 
 function assertPositiveCents(amount: number) {
   if (!Number.isInteger(amount) || amount <= 0) throw new DomainError("INVALID_AMOUNT", "Amount must be a positive whole number of cents");
@@ -39,19 +43,22 @@ async function requireWalletUser(tx: Tx, userId: string) {
 }
 
 /** Called after a payment provider (Paynow/EcoCash, Stripe…) confirms a payment. */
-export async function topUp(userId: string, amount: number, paymentReference: string) {
+export async function topUp(userId: string, amount: number, paymentReference: string, txArg?: Tx) {
   assertPositiveCents(amount);
-  return db.$transaction(async (tx) => {
+  const work = async (tx: Tx) => {
     await requireWalletUser(tx, userId);
     const dup = await tx.ledgerEntry.findFirst({ where: { type: "TOP_UP", reference: paymentReference } });
-    if (dup) return; // idempotent: payment webhooks can be delivered more than once
+    if (dup) return false; // idempotent: payment webhooks can be delivered more than once
     await credit(tx, userId, amount, "TOP_UP", paymentReference);
-  });
+    return true;
+  };
+  return txArg ? work(txArg) : db.$transaction(work);
 }
 
 /** Wallet-to-wallet transfer. Funds stay in the system (only usable for books). */
 export async function transfer(fromUserId: string, toEmail: string, amount: number) {
   assertPositiveCents(amount);
+  if (amount > MAX_TRANSFER_CENTS) throw new DomainError("INVALID_AMOUNT", "That transfer is above the limit");
   return db.$transaction(async (tx) => {
     await requireWalletUser(tx, fromUserId);
     const to = await tx.user.findUnique({ where: { email: toEmail.toLowerCase() } });
@@ -67,7 +74,7 @@ export async function buyGiftCard(buyerId: string, amount: number, now = new Dat
   assertPositiveCents(amount);
   return db.$transaction(async (tx) => {
     await requireWalletUser(tx, buyerId);
-    const expiresAt = new Date(now.getTime() + GIFT_CARD_VALIDITY_DAYS * 86_400_000);
+    const expiresAt = new Date(now.getTime() + config().GIFT_CARD_VALIDITY_DAYS * 86_400_000);
     const card = await tx.giftCard.create({ data: { code: newGiftCardCode(), amountCents: amount, buyerId, expiresAt } });
     await debit(tx, buyerId, amount, "GIFT_CARD_BUY", card.id);
     return card;
@@ -92,11 +99,19 @@ export async function redeemGiftCard(userId: string, code: string, now = new Dat
 }
 
 /** Buy a whole book (sectionId omitted) or one section of it, paying from the wallet. */
+function assertAge(rating: Parameters<typeof checkAge>[0], buyer: { dateOfBirth: Date | null }) {
+  const age = checkAge(rating, buyer);
+  if (!age.ok) {
+    throw new DomainError("AGE", age.reason === "DOB_REQUIRED" ? "Add your date of birth in Settings to buy age-rated books" : `This book is for readers aged ${age.minAge}+`);
+  }
+}
+
 export async function purchaseBook(userId: string, bookId: string, sectionId?: string) {
   return db.$transaction(async (tx) => {
-    await requireWalletUser(tx, userId);
+    const buyer = await requireWalletUser(tx, userId);
     const book = await tx.book.findUnique({ where: { id: bookId }, include: { sections: true } });
     if (!book || book.status !== "ON_SALE") throw new DomainError("NOT_FOUND", "Book not available");
+    assertAge(book.ageRating, buyer);
 
     const existing = await tx.purchase.findMany({ where: { userId, bookId, format: "TEXT" } });
     if (existing.some((p) => p.sectionId === null)) throw new DomainError("ALREADY_OWNED", "You already own this book");
@@ -124,4 +139,47 @@ export async function purchaseBook(userId: string, bookId: string, sectionId?: s
 export async function expireGiftCards(now = new Date()) {
   const res = await db.giftCard.updateMany({ where: { status: "ACTIVE", expiresAt: { lte: now } }, data: { status: "EXPIRED" } });
   return res.count;
+}
+
+/**
+ * Audiobook / video access, bought as a whole. Readers who own the whole text book get the
+ * book's owner discount on video.
+ */
+export async function purchaseMedia(userId: string, bookId: string, kind: "AUDIO" | "VIDEO") {
+  return db.$transaction(async (tx) => {
+    const buyer = await requireWalletUser(tx, userId);
+    const book = await tx.book.findUnique({ where: { id: bookId }, include: { _count: { select: { media: { where: { kind } } } } } });
+    if (!book || book.status !== "ON_SALE") throw new DomainError("NOT_FOUND", "Book not available");
+    assertAge(book.ageRating, buyer);
+    const base = kind === "AUDIO" ? book.audioPriceCents : book.videoPriceCents;
+    if (base == null || book._count.media === 0) throw new DomainError("NOT_FOR_SALE", `No ${kind === "AUDIO" ? "audiobook" : "video"} for this book yet`);
+    if (await tx.purchase.findFirst({ where: { userId, bookId, format: kind } })) throw new DomainError("ALREADY_OWNED", "You already own this");
+    let price = base;
+    if (kind === "VIDEO" && book.videoDiscountPercentForOwners > 0) {
+      const ownsBook = await tx.purchase.findFirst({ where: { userId, bookId, format: "TEXT", sectionId: null } });
+      if (ownsBook) price = Math.round((base * (100 - book.videoDiscountPercentForOwners)) / 100);
+    }
+    const purchase = await tx.purchase.create({ data: { userId, bookId, format: kind, amountCents: price } });
+    if (price > 0) await debit(tx, userId, price, "PURCHASE", purchase.id);
+    return purchase;
+  });
+}
+
+/** Accounting correction (e.g. a refunded payment). Positive credits, negative debits. Always noted. */
+export async function adjustWallet(actorId: string, userId: string, amount: number, note: string) {
+  if (!Number.isInteger(amount) || amount === 0) throw new DomainError("INVALID_AMOUNT", "Enter a non-zero amount");
+  if (!note.trim()) throw new DomainError("INVALID", "A note is required for adjustments");
+  return db.$transaction(async (tx) => {
+    const actor = await tx.user.findUnique({ where: { id: actorId } });
+    if (!actor || actor.role !== "ACCOUNTING" || actor.status !== "ACTIVE") throw new DomainError("FORBIDDEN", "Accounting only");
+    await requireWalletUser(tx, userId);
+    const w = await walletFor(tx, userId);
+    if (amount < 0) {
+      const res = await tx.wallet.updateMany({ where: { id: w.id, balanceCents: { gte: -amount } }, data: { balanceCents: { increment: amount } } });
+      if (res.count !== 1) throw new DomainError("INSUFFICIENT_FUNDS", "Wallet balance is lower than the adjustment");
+    } else {
+      await tx.wallet.update({ where: { id: w.id }, data: { balanceCents: { increment: amount } } });
+    }
+    await tx.ledgerEntry.create({ data: { walletId: w.id, type: "ADJUSTMENT", amountCents: amount, note: note.trim(), createdById: actorId } });
+  });
 }

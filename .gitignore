@@ -40,3 +40,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 !.env.example
+.e2e-uploads/
+uploads/
+test-results/
+playwright-report/
+backups/
+!.env.production.example
+scripts/create-admin.cjs

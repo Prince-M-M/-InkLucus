@@ -7,6 +7,10 @@ import { ActionForm } from "@/components/ActionForm";
 import { Card, Field, Notice, StatusBadge, btnOutlineCls, inputCls } from "@/components/ui";
 import { addPenNameAction, claimAction, promoteReaderAction, proposeSlotAction, withdrawProposalAction } from "./actions";
 import { LIST_LABELS, schedulablePeriods } from "@/lib/homepage";
+import { salesStats } from "@/lib/stats";
+import { reportPeriod } from "@/lib/periods";
+import { PeriodPicker } from "@/components/PeriodPicker";
+import { SalesStatsView } from "@/components/SalesStatsView";
 
 const TABS = [
   ["pool", "Submission pool"],
@@ -14,10 +18,11 @@ const TABS = [
   ["books", "My books"],
   ["authors", "My authors"],
   ["homepage", "Homepage"],
+  ["stats", "Statistics"],
 ] as const;
 type Tab = (typeof TABS)[number][0];
 
-export default async function EditorDashboard({ searchParams }: { searchParams: Promise<{ tab?: string; genre?: string; language?: string; error?: string }> }) {
+export default async function EditorDashboard({ searchParams }: { searchParams: Promise<{ tab?: string; genre?: string; language?: string; error?: string; period?: string }> }) {
   const sp = await searchParams;
   const tab: Tab = (TABS.find(([k]) => k === sp.tab)?.[0] ?? "pool") as Tab;
   const { user, editor } = await requireEditor();
@@ -47,6 +52,7 @@ export default async function EditorDashboard({ searchParams }: { searchParams: 
       {tab === "books" && <MyBooks editorId={editor.id} />}
       {tab === "authors" && <MyAuthors editorId={editor.id} isAdmin={user.role === "ADMIN"} />}
       {tab === "homepage" && <HomepageProposals editorId={editor.id} />}
+      {tab === "stats" && <EditorStats editorId={editor.id} period={sp.period} />}
     </div>
   );
 }
@@ -190,6 +196,18 @@ async function HomepageProposals({ editorId }: { editorId: string }) {
           ))}</ul>
         )}
       </Card>
+    </div>
+  );
+}
+
+async function EditorStats({ editorId, period }: { editorId: string; period?: string }) {
+  const p = reportPeriod(period);
+  const s = await salesStats({ editorId }, p);
+  return (
+    <div className="space-y-4">
+      <PeriodPicker base="/editor?tab=stats" active={p.key} />
+      <p className="text-sm text-stone-500">Books and authors you manage · {p.label}. Wishlists, likes and ratings are all-time.</p>
+      <SalesStatsView s={s} />
     </div>
   );
 }

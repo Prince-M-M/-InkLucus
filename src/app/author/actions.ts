@@ -2,6 +2,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireUser } from "@/lib/guards";
+import { LIMITS, rateLimit } from "@/lib/rate-limit";
 import { can } from "@/lib/rbac";
 import { addChapter, submitBook } from "@/lib/submissions";
 import { parseManuscript } from "@/lib/manuscript";
@@ -23,6 +24,7 @@ export async function submitBookAction(_: FormState, form: FormData): Promise<Fo
   const user = await requireUser();
   if (!can(user, "book:submit")) return { error: "Your account cannot submit books." };
   if (form.get("agree") !== "on") return { error: "Please confirm the requirements." };
+  if (!(await rateLimit(`submit:${user.id}`, LIMITS.submit.limit, LIMITS.submit.window))) return { error: "You've submitted several books today. Try again tomorrow." };
 
   const parsed = submission.safeParse({
     title: str(form, "title"), synopsis: str(form, "synopsis"), language: str(form, "language"),

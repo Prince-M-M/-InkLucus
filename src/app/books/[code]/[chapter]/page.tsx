@@ -1,53 +1,78 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
-import { canReadChapter } from "@/lib/access";
+import { chapterAccess, recordRead } from "@/lib/reading";
 import { can } from "@/lib/rbac";
 import { ReadAloud } from "@/components/ReadAloud";
 import { ReportButton } from "@/components/ReportButton";
-import { postComment } from "@/app/actions";
+import { ActionForm } from "@/components/ActionForm";
+import { inputCls } from "@/components/ui";
+import { deleteCommentAction, postCommentAction } from "@/app/actions";
 
-export default async function ChapterPage({ params }: { params: Promise<{ code: string; chapter: string }> }) {
+type Params = { params: Promise<{ code: string; chapter: string }> };
+
+export async function generateMetadata({ params }: Params): Promise<Metadata> {
+  const { code, chapter } = await params;
+  const book = await db.book.findUnique({ where: { code }, select: { title: true, status: true } });
+  return { title: book?.status === "ON_SALE" ? `${book.title}, chapter ${chapter}` : "Not found", robots: { index: false } };
+}
+
+export default async function ChapterPage({ params }: Params) {
   const { code, chapter } = await params;
   const number = Number(chapter);
-  if (!Number.isInteger(number)) notFound();
+  if (!Number.isInteger(number) || number < 1) notFound();
   const user = await currentUser();
 
   const book = await db.book.findUnique({
     where: { code },
-    include: { penName: { include: { author: true } }, editor: true, _count: { select: { chapters: true } } },
+    select: { id: true, code: true, title: true, status: true, language: true, penName: { select: { name: true } }, editor: { select: { userId: true } }, _count: { select: { chapters: true } } },
   });
   if (!book || book.status !== "ON_SALE") notFound();
-  const ch = await db.chapter.findUnique({
-    where: { bookId_number: { bookId: book.id, number } },
-    include: { comments: { where: { parentId: null }, orderBy: { createdAt: "asc" }, include: { user: true, replies: { include: { user: true } } } } },
-  });
+  const ch = await db.chapter.findUnique({ where: { bookId_number: { bookId: book.id, number } }, select: { id: true, number: true, title: true, content: true } });
   if (!ch) notFound();
 
-  const purchases = user ? await db.purchase.findMany({ where: { userId: user.id, bookId: book.id, format: "TEXT" }, include: { section: true } }) : [];
-  const access = canReadChapter({
-    chapterNumber: number,
-    lockChapter: book.lockChapter,
-    viewer: user,
-    authorUserId: book.penName?.author.userId ?? null,
-    editorUserId: book.editor?.userId ?? null,
-    ownsWholeBook: purchases.some((p) => p.sectionId === null),
-    ownedSections: purchases.flatMap((p) => (p.section ? [p.section] : [])),
-  });
+  const access = await chapterAccess(user, book.id, number);
+  if (access.allowed && user) await recordRead(user.id, book.id, ch.id, number);
 
-  if (access.allowed && user) {
-    await db.readingProgress.upsert({
-      where: { userId_bookId: { userId: user.id, bookId: book.id } },
-      update: { lastChapter: number },
-      create: { userId: user.id, bookId: book.id, lastChapter: number },
-    });
-    await db.chapter.update({ where: { id: ch.id }, data: { views: { increment: 1 } } });
-  }
+  const comments = access.allowed
+    ? await db.comment.findMany({
+        where: { chapterId: ch.id, parentId: null },
+        orderBy: { createdAt: "asc" },
+        take: 200,
+        include: { user: { select: { displayName: true } }, replies: { orderBy: { createdAt: "asc" }, include: { user: { select: { displayName: true } } } } },
+      })
+    : [];
+  const path = `/books/${book.code}/${number}`;
+  const canComment = !!user && can(user, "engage:comment");
+  const canModerate = (userId: string) => !!user && (user.id === userId || user.role === "ADMIN" || user.id === book.editor?.userId);
 
-  const penName = book.penName?.name;
-  const label = (c: { asPenNameId: string | null; user: { displayName: string } }) =>
-    c.asPenNameId ? <><b>{penName}</b> <span className="ml-1 rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold uppercase text-black">Author</span></> : <b>{c.user.displayName}</b>;
+  type C = { id: string; userId: string; body: string; asPenNameId: string | null; createdAt: Date; user: { displayName: string } };
+  const CommentBody = ({ c, reply }: { c: C; reply?: boolean }) => (
+    <div>
+      <p className="text-sm">
+        {c.asPenNameId ? <><b>{book.penName?.name}</b> <span className="ml-1 rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold uppercase text-black">Author</span></> : <b>{c.user.displayName}</b>}
+        <span className="ml-2 text-xs text-stone-500">{c.createdAt.toLocaleDateString()}</span>
+      </p>
+      <p className="whitespace-pre-line">{c.body}</p>
+      <div className="mt-1 flex flex-wrap items-start gap-4">
+        {canComment && !reply && (
+          <details className="text-xs text-stone-500">
+            <summary className="cursor-pointer select-none">Reply</summary>
+            <ActionForm action={postCommentAction} submitLabel="Reply" className="mt-2 flex max-w-md flex-col gap-2">
+              <input type="hidden" name="chapterId" value={ch.id} /><input type="hidden" name="parentId" value={c.id} /><input type="hidden" name="path" value={path} />
+              <textarea name="body" required rows={2} maxLength={4000} className={`${inputCls} text-sm`} />
+            </ActionForm>
+          </details>
+        )}
+        {user && user.id !== c.userId && <ReportButton targetId={c.userId} commentId={c.id} />}
+        {canModerate(c.userId) && c.body !== "[deleted]" && (
+          <form action={deleteCommentAction}><input type="hidden" name="commentId" value={c.id} /><input type="hidden" name="path" value={path} /><button className="text-xs text-stone-500 underline">Delete</button></form>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <article className="mx-auto max-w-2xl">
@@ -57,14 +82,15 @@ export default async function ChapterPage({ params }: { params: Promise<{ code: 
       {access.allowed ? (
         <>
           <div className="my-4"><ReadAloud text={ch.content} lang={book.language} /></div>
-          <div className="whitespace-pre-line text-lg leading-relaxed">{ch.content}</div>
+          <div className="whitespace-pre-line font-serif text-lg leading-relaxed">{ch.content}</div>
         </>
       ) : (
         <div className="my-10 rounded-md border border-stone-300 p-6 text-center dark:border-stone-700">
-          <p className="font-semibold">This chapter is locked.</p>
-          <Link href={access.reason === "LOGIN_REQUIRED" ? "/login" : `/books/${book.code}`} className="mt-3 inline-block underline">
-            {access.reason === "LOGIN_REQUIRED" ? "Log in to continue" : "Buy this book or section to continue"}
-          </Link>
+          {access.reason === "LOGIN_REQUIRED" && <><p className="font-semibold">This chapter is for members.</p><Link href={`/login?next=${path}`} className="mt-3 inline-block underline">Log in to continue</Link></>}
+          {access.reason === "PURCHASE_REQUIRED" && <><p className="font-semibold">This chapter is locked.</p><Link href={`/books/${book.code}`} className="mt-3 inline-block underline">Buy the book or this section to continue</Link></>}
+          {access.reason === "AGE_LOGIN" && <><p className="font-semibold">This book is for readers aged {access.minAge}+.</p><Link href={`/login?next=${path}`} className="mt-3 inline-block underline">Log in to continue</Link></>}
+          {access.reason === "DOB_REQUIRED" && <><p className="font-semibold">This book is for readers aged {access.minAge}+.</p><Link href="/settings" className="mt-3 inline-block underline">Add your date of birth in Settings</Link></>}
+          {access.reason === "TOO_YOUNG" && <p className="font-semibold">This book is for readers aged {access.minAge}+.</p>}
         </div>
       )}
 
@@ -75,26 +101,22 @@ export default async function ChapterPage({ params }: { params: Promise<{ code: 
 
       {access.allowed && (
         <section className="border-t border-stone-200 pt-6 dark:border-stone-800">
-          <h2 className="mb-4 font-semibold">Comments</h2>
-          <ul className="space-y-4">
-            {ch.comments.map((c) => (
+          <h2 className="mb-4 font-semibold">Comments ({comments.reduce((a, c) => a + 1 + c.replies.length, 0)})</h2>
+          <ul className="space-y-5">
+            {comments.map((c) => (
               <li key={c.id}>
-                <p className="text-sm">{label(c)}</p>
-                <p>{c.body}</p>
-                {user && user.id !== c.userId && <ReportButton targetId={c.userId} commentId={c.id} />}
-                <ul className="ml-6 mt-2 space-y-2">
-                  {c.replies.map((r) => <li key={r.id}><p className="text-sm">{label(r)}</p><p>{r.body}</p>{user && user.id !== r.userId && <ReportButton targetId={r.userId} commentId={r.id} />}</li>)}
-                </ul>
+                <CommentBody c={c} />
+                {c.replies.length > 0 && <ul className="ml-6 mt-3 space-y-3 border-l border-stone-200 pl-4 dark:border-stone-800">{c.replies.map((r) => <li key={r.id}><CommentBody c={r} reply /></li>)}</ul>}
               </li>
             ))}
           </ul>
-          {can(user, "engage:comment") && (
-            <form action={postComment} className="mt-6 flex flex-col gap-2">
-              <input type="hidden" name="chapterId" value={ch.id} />
-              <textarea name="body" required rows={3} className="rounded-md border border-stone-300 bg-transparent p-2 dark:border-stone-700" placeholder="Write a comment…" />
-              <button className="self-start rounded-md bg-stone-900 px-4 py-2 text-white dark:bg-stone-100 dark:text-stone-900">Post</button>
-            </form>
-          )}
+          {canComment ? (
+            <ActionForm action={postCommentAction} submitLabel="Post" className="mt-6 flex flex-col gap-2">
+              <input type="hidden" name="chapterId" value={ch.id} /><input type="hidden" name="path" value={path} />
+              <textarea name="body" required rows={3} maxLength={4000} placeholder="Write a comment…" className={inputCls} />
+            </ActionForm>
+          ) : user ? <p className="mt-6 text-sm text-stone-500">Your account can&apos;t comment right now.</p>
+            : <p className="mt-6 text-sm"><Link href={`/login?next=${path}`} className="underline">Log in</Link> to comment.</p>}
         </section>
       )}
     </article>
