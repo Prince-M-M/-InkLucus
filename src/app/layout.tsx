@@ -4,7 +4,7 @@ import { currentUser } from "@/lib/auth";
 import { logout } from "./actions";
 import "./globals.css";
 
-export const metadata: Metadata = { title: "Bookplatform", description: "Read, listen to and publish books in many languages." };
+export const metadata: Metadata = { title: "InkLucus", description: "Read, listen to and publish books in many languages." };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const user = await currentUser();
@@ -13,7 +13,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="min-h-screen bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
         <header className="border-b border-stone-200 dark:border-stone-800">
           <nav className="mx-auto flex max-w-6xl items-center gap-5 px-4 py-3">
-            <Link href="/" className="font-bold">Bookplatform</Link>
+            <Link href="/" className="font-bold">InkLucus</Link>
             <Link href="/browse" className="text-sm">Browse</Link>
             <Link href="/become-an-author" className="hidden text-sm sm:inline">Write with us</Link>
             <div className="ml-auto flex items-center gap-4 text-sm">

@@ -1,4 +1,4 @@
-# Bookplatform
+# InkLucus
 
 A multilingual web-novel platform for reading, buying and publishing books. It covers readers, authors, editors, accounting and admins, with wallets, gift cards and books sold by section.
 
