@@ -1,0 +1,454 @@
+// Book platform – core data model.
+// Money is always stored as integer cents (never floats).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Accounts ─────────────────────────────
+
+enum Role {
+  READER
+  AUTHOR
+  EDITOR
+  ACCOUNTING
+  ADMIN
+}
+
+enum AccountStatus {
+  ACTIVE
+  RESTRICTED // can read what they bought; cannot review/comment
+  BLOCKED // shown reason; deleted after deletionScheduledAt unless appealed
+}
+
+model User {
+  id                  String        @id @default(cuid())
+  email               String        @unique
+  passwordHash        String
+  displayName         String
+  role                Role          @default(READER)
+  status              AccountStatus @default(ACTIVE)
+  statusReason        String?
+  deletionScheduledAt DateTime?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  wallet        Wallet?
+  authorProfile AuthorProfile?
+  editorProfile EditorProfile?
+
+  purchases      Purchase[]
+  wishlist       WishlistItem[]
+  likes          BookLike[]
+  reviews        Review[]
+  comments       Comment[]
+  progress       ReadingProgress[]
+  flagsReceived  Flag[]            @relation("FlagTarget")
+  flagsRaised    Flag[]            @relation("FlagReporter")
+  appeals        Appeal[]
+  submissions    Book[]            @relation("Submitter")
+  giftCardsBought GiftCard[]       @relation("GiftCardBuyer")
+  giftCardsRedeemed GiftCard[]     @relation("GiftCardRedeemer")
+  roleChanges    RoleChange[]      @relation("RoleChangeTarget")
+  roleChangesMade RoleChange[]     @relation("RoleChangeActor")
+}
+
+/// Audit trail for admins/editors changing account types or status.
+model RoleChange {
+  id        String   @id @default(cuid())
+  userId    String
+  actorId   String
+  fromRole  Role
+  toRole    Role
+  note      String?
+  createdAt DateTime @default(now())
+  user      User     @relation("RoleChangeTarget", fields: [userId], references: [id])
+  actor     User     @relation("RoleChangeActor", fields: [actorId], references: [id])
+}
+
+model EditorProfile {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  contactEmail String
+  contactPhone String?
+  genres       String[] // genres this editor specialises in
+  languages    String[]
+  user         User     @relation(fields: [userId], references: [id])
+
+  authors    AuthorProfile[]
+  penNames   PenName[]
+  books      Book[]          @relation("BookEditor")
+  reviewing  Book[]          @relation("ReviewingEditor")
+  homepageProposals HomepageSlot[] @relation("SlotProposer")
+}
+
+/// Referral source (author scout / marketing campaign). code = "AA1234".
+model Referral {
+  id          String          @id @default(cuid())
+  code        String          @unique @db.VarChar(6)
+  label       String
+  authorCount Int             @default(0) // monotonically increasing counter
+  createdAt   DateTime        @default(now())
+  authors     AuthorProfile[]
+}
+
+model AuthorProfile {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  /// Internal identity code "AA1234-006109" = referral code + author number under that referral.
+  internalCode String   @unique
+  referralId   String
+  authorNumber Int
+  editorId     String?
+  createdAt    DateTime @default(now())
+
+  user     User           @relation(fields: [userId], references: [id])
+  referral Referral       @relation(fields: [referralId], references: [id])
+  editor   EditorProfile? @relation(fields: [editorId], references: [id])
+  penNames PenName[]
+  contracts Contract[]
+  royalties RoyaltyStatement[]
+
+  @@unique([referralId, authorNumber])
+}
+
+/// Max 5 pen names per author. Each pen name can have its own editor
+/// (authors write in different genres/languages).
+model PenName {
+  id        String         @id @default(cuid())
+  name      String         @unique
+  slug      String         @unique
+  bio       String?
+  authorId  String
+  editorId  String?
+  createdAt DateTime       @default(now())
+  author    AuthorProfile  @relation(fields: [authorId], references: [id])
+  editor    EditorProfile? @relation(fields: [editorId], references: [id])
+  books     Book[]
+}
+
+// ───────────────────────────── Books ─────────────────────────────
+
+enum BookStatus {
+  IN_POOL // visible to all editors/admins
+  UNDER_REVIEW // claimed by one editor, hidden from others
+  ACCEPTED // accepted, awaiting contract / setup
+  REJECTED
+  ON_SALE // public
+  UNLISTED
+}
+
+enum AgeRating {
+  ALL
+  TEEN_13
+  MATURE_16
+  ADULT_18
+}
+
+model Book {
+  id            String     @id @default(cuid())
+  /// Public internal identity code used in URLs, e.g. "BK7Q2M9X". Titles can collide.
+  code          String     @unique
+  title         String
+  synopsis      String
+  coverUrl      String?
+  isbn          String?    @unique // hidden from readers & visitors
+  language      String // ISO 639 code, e.g. "en", "sn" (Shona)
+  genres        String[]
+  ageRating     AgeRating  @default(ALL)
+  status        BookStatus @default(IN_POOL)
+  /// First chapter number that requires payment. Chapters < lockChapter are free.
+  lockChapter   Int?
+  wholeBookPriceCents Int?
+  hasAudio      Boolean    @default(false)
+  hasVideo      Boolean    @default(false)
+  audioPriceCents Int?
+  videoPriceCents Int?
+  videoDiscountPercentForOwners Int @default(0)
+  editorReview  String?
+  publishedAt   DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  submitterId       String
+  penNameId         String?
+  editorId          String?
+  reviewingEditorId String?
+  submissionNote    String?
+  decisionMessage   String? // message left on the submitter's account
+
+  submitter       User           @relation("Submitter", fields: [submitterId], references: [id])
+  penName         PenName?       @relation(fields: [penNameId], references: [id])
+  editor          EditorProfile? @relation("BookEditor", fields: [editorId], references: [id])
+  reviewingEditor EditorProfile? @relation("ReviewingEditor", fields: [reviewingEditorId], references: [id])
+
+  chapters  Chapter[]
+  sections  Section[]
+  purchases Purchase[]
+  wishlist  WishlistItem[]
+  likes     BookLike[]
+  reviews   Review[]
+  progress  ReadingProgress[]
+  homepageSlots HomepageSlot[]
+  contracts Contract[]
+
+  @@index([status, language])
+  @@index([publishedAt])
+}
+
+model Chapter {
+  id        String    @id @default(cuid())
+  bookId    String
+  number    Int
+  title     String
+  content   String
+  wordCount Int       @default(0)
+  views     Int       @default(0)
+  createdAt DateTime  @default(now())
+  book      Book      @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  comments  Comment[]
+
+  @@unique([bookId, number])
+}
+
+/// Large books are sold in sections (e.g. 50 chapters each) instead of per chapter.
+model Section {
+  id           String     @id @default(cuid())
+  bookId       String
+  index        Int
+  firstChapter Int
+  lastChapter  Int
+  priceCents   Int
+  book         Book       @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  purchases    Purchase[]
+
+  @@unique([bookId, index])
+}
+
+model Contract {
+  id              String        @id @default(cuid())
+  authorId        String
+  bookId          String
+  royaltyPercent  Int // author's share of profit
+  signedAt        DateTime
+  author          AuthorProfile @relation(fields: [authorId], references: [id])
+  book            Book          @relation(fields: [bookId], references: [id])
+
+  @@unique([authorId, bookId])
+}
+
+// ───────────────────────────── Money ─────────────────────────────
+
+model Wallet {
+  id           String        @id @default(cuid())
+  userId       String        @unique
+  balanceCents Int           @default(0)
+  user         User          @relation(fields: [userId], references: [id])
+  entries      LedgerEntry[]
+}
+
+enum LedgerType {
+  TOP_UP
+  PURCHASE
+  TRANSFER_OUT
+  TRANSFER_IN
+  GIFT_CARD_BUY
+  GIFT_CARD_REDEEM
+  ADJUSTMENT
+}
+
+/// Append-only ledger. Wallet.balanceCents must always equal sum(amountCents).
+model LedgerEntry {
+  id          String     @id @default(cuid())
+  walletId    String
+  type        LedgerType
+  amountCents Int // positive = credit, negative = debit
+  reference   String? // purchase id, gift card id, counterpart wallet, payment ref
+  note        String?
+  createdAt   DateTime   @default(now())
+  wallet      Wallet     @relation(fields: [walletId], references: [id])
+
+  @@index([walletId, createdAt])
+}
+
+enum GiftCardStatus {
+  ACTIVE
+  REDEEMED
+  EXPIRED
+}
+
+model GiftCard {
+  id           String         @id @default(cuid())
+  code         String         @unique
+  amountCents  Int
+  status       GiftCardStatus @default(ACTIVE)
+  buyerId      String
+  redeemedById String?
+  redeemedAt   DateTime?
+  expiresAt    DateTime
+  createdAt    DateTime       @default(now())
+  buyer        User           @relation("GiftCardBuyer", fields: [buyerId], references: [id])
+  redeemedBy   User?          @relation("GiftCardRedeemer", fields: [redeemedById], references: [id])
+}
+
+enum PurchaseFormat {
+  TEXT
+  AUDIO
+  VIDEO
+}
+
+model Purchase {
+  id          String         @id @default(cuid())
+  userId      String
+  bookId      String
+  sectionId   String? // null = whole book
+  format      PurchaseFormat @default(TEXT)
+  amountCents Int
+  createdAt   DateTime       @default(now())
+  user        User           @relation(fields: [userId], references: [id])
+  book        Book           @relation(fields: [bookId], references: [id])
+  section     Section?       @relation(fields: [sectionId], references: [id])
+
+  @@index([bookId, createdAt])
+  @@index([userId])
+}
+
+/// Biweekly author profit share, entered/adjusted by accounting.
+model RoyaltyStatement {
+  id          String        @id @default(cuid())
+  authorId    String
+  periodStart DateTime
+  periodEnd   DateTime
+  amountCents Int
+  createdAt   DateTime      @default(now())
+  author      AuthorProfile @relation(fields: [authorId], references: [id])
+
+  @@unique([authorId, periodStart])
+}
+
+// ───────────────────────────── Engagement ─────────────────────────────
+
+model WishlistItem {
+  userId    String
+  bookId    String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@id([userId, bookId])
+}
+
+model BookLike {
+  userId    String
+  bookId    String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@id([userId, bookId])
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  userId    String
+  bookId    String
+  rating    Int // 1–5
+  body      String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, bookId])
+}
+
+model Comment {
+  id        String    @id @default(cuid())
+  chapterId String
+  userId    String
+  parentId  String?
+  body      String
+  /// Set when the book's author comments: shown with an "Author" badge and pen name.
+  asPenNameId String?
+  createdAt DateTime  @default(now())
+  chapter   Chapter   @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id])
+  parent    Comment?  @relation("Thread", fields: [parentId], references: [id])
+  replies   Comment[] @relation("Thread")
+}
+
+model ReadingProgress {
+  userId      String
+  bookId      String
+  lastChapter Int
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id])
+  book        Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@id([userId, bookId])
+}
+
+// ───────────────────────────── Moderation ─────────────────────────────
+
+model Flag {
+  id         String   @id @default(cuid())
+  targetId   String
+  reporterId String
+  reason     String
+  createdAt  DateTime @default(now())
+  target     User     @relation("FlagTarget", fields: [targetId], references: [id])
+  reporter   User     @relation("FlagReporter", fields: [reporterId], references: [id])
+}
+
+model Appeal {
+  id        String   @id @default(cuid())
+  userId    String
+  message   String
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+// ───────────────────────────── Homepage curation ─────────────────────────────
+
+enum HomepageList {
+  EDITORS_PICKS
+  POPULAR
+  BEST_SELLING
+  FEATURED_LANGUAGE
+}
+
+enum SlotStatus {
+  PROPOSED // submitted by editor (biweekly)
+  APPROVED // chosen by admin
+  DECLINED
+}
+
+model HomepageSlot {
+  id           String       @id @default(cuid())
+  list         HomepageList
+  language     String? // for FEATURED_LANGUAGE (e.g. "sn")
+  bookId       String
+  proposedById String
+  approvedById String?
+  status       SlotStatus   @default(PROPOSED)
+  startsAt     DateTime
+  endsAt       DateTime
+  createdAt    DateTime     @default(now())
+  book         Book         @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  proposedBy   EditorProfile @relation("SlotProposer", fields: [proposedById], references: [id])
+
+  @@index([list, status, startsAt, endsAt])
+}
+
+model SocialLink {
+  id       String @id @default(cuid())
+  audience Role // which dashboard shows it
+  platform String // "discord", "facebook"
+  label    String
+  url      String
+}
